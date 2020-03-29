@@ -58,13 +58,11 @@ void readTemperatureAndSoilMoisture()
   sensors.requestTemperatures();
   int16_t conversionTime = sensors.millisToWaitForConversion(sensors.getResolution());
   sleep(conversionTime);
-  float temperature = static_cast<float>(static_cast<int>(sensors.getTempCByIndex(0) * 10.)) / 10.;
-  processTemperature(temperature);
+  processTemperature(sensors.getTempCByIndex(0));
 }
 
 void processTemperature(float temperature)
 {
-
   if (isnan(temperature) || temperature < -10)
   {
     Serial.println("Failed reading temperature!");
