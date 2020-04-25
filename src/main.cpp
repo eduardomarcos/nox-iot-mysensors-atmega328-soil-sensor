@@ -11,29 +11,45 @@
 #include <DallasTemperature.h>
 
 // Update interval to send data (milliseconds)
-static const uint64_t UPDATE_INTERVAL = 7000;
+static const uint16_t UPDATE_INTERVAL = 3000;
 static const uint16_t MAX_CYCLES_WITHOUT_SENDING = 10;
 
+// SOIL MEASUREMENT CONFIGURATION
+static const uint16_t SOIL_READS_DELAY = 100;
+static const uint16_t SOIL_DRY_MAX = 1016;
+static const uint8_t SOIL_WET_MAX = 41;
+static const uint8_t SOIL_READS = 10;
+static const uint8_t SOIL_POWER_PIN = 3;
+
 #define DALLAS_PIN 2
+#define SOIL_PIN A3
 
 #define CHILD_ID_TEMP 1
+#define CHILD_ID_SOIL 2
 
 OneWire oneWire(DALLAS_PIN);
 DallasTemperature sensors(&oneWire);
 
 MyMessage msgTemp(CHILD_ID_TEMP, V_TEMP);
+MyMessage msgSoil(CHILD_ID_SOIL, V_TRIPPED);
 
-float lastTemperatureRead = 0;
-int cyclesWithoutSending = 0;
+float temperatureLastRead = 0;
+uint8_t temperatureCyclesWithoutSending = 0;
+int soilLastRead = 0;
+uint8_t soilCyclesWithoutSending = 0;
 
 void readTemperatureAndSoilMoisture();
 float roundMeasurement(float val);
 void processTemperature(float temperature);
+void processSoilValue();
+
+long soilReads[SOIL_READS];
 
 void presentation()
 {
   sendSketchInfo("SoilSensor", "1.0");
   present(CHILD_ID_TEMP, S_TEMP);
+  present(CHILD_ID_SOIL, S_MOISTURE);
 }
 
 void before()
@@ -44,12 +60,15 @@ void before()
 void setup()
 {
   // analogReference(INTERNAL);
+  pinMode(SOIL_POWER_PIN, OUTPUT);
   sensors.setWaitForConversion(false);
 }
 
 void loop()
 {
+  digitalWrite(SOIL_POWER_PIN, HIGH);
   readTemperatureAndSoilMoisture();
+  digitalWrite(SOIL_POWER_PIN, LOW);
   sleep(UPDATE_INTERVAL);
 }
 
@@ -59,6 +78,18 @@ void readTemperatureAndSoilMoisture()
   int16_t conversionTime = sensors.millisToWaitForConversion(sensors.getResolution());
   sleep(conversionTime);
   processTemperature(sensors.getTempCByIndex(0));
+
+  for (int i = 0; i < SOIL_READS; i++)
+  {
+    int soilRead = analogRead(SOIL_PIN);
+    #ifdef MY_DEBUG
+      Serial.print("Soil Read: ");
+      Serial.println(soilRead);
+    #endif
+    soilReads[i] = soilRead;
+    delayMicroseconds(SOIL_READS_DELAY);
+  }
+  processSoilValue();
 }
 
 void processTemperature(float temperature)
@@ -70,12 +101,30 @@ void processTemperature(float temperature)
   else
   {
     temperature = roundMeasurement(temperature);
-    if (++cyclesWithoutSending > MAX_CYCLES_WITHOUT_SENDING || temperature != lastTemperatureRead)
+    if (++temperatureCyclesWithoutSending > MAX_CYCLES_WITHOUT_SENDING || temperature != temperatureLastRead)
     {
       send(msgTemp.set(temperature, 1));
-      lastTemperatureRead = temperature;
-      cyclesWithoutSending = 0;
+      temperatureLastRead = temperature;
+      temperatureCyclesWithoutSending = 0;
     }
+  }
+}
+
+void processSoilValue()
+{
+  uint16_t sum = 0;
+  for (int i = 0; i < SOIL_READS; i++)
+  {
+    uint16_t readValue = soilReads[i];
+    sum += readValue;
+  }
+  uint8_t average = map(sum / SOIL_READS, SOIL_WET_MAX, SOIL_DRY_MAX, 100, 0);
+  average = average > 100 ? 100 : average;
+  if (++soilCyclesWithoutSending > MAX_CYCLES_WITHOUT_SENDING || average != soilLastRead)
+  {
+    send(msgSoil.set(average, 0));
+    soilLastRead = average;
+    soilCyclesWithoutSending = 0;
   }
 }
 
